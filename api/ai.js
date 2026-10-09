@@ -94,8 +94,10 @@ module.exports = async (req, res) => {
     else if (provider === "openai") out = await callOpenAICompat(Object.assign({ base: "https://api.openai.com/v1", tokenField: "max_completion_tokens" }, args));
     else out = await callOpenAICompat(Object.assign({ base: "https://openrouter.ai/api/v1", tokenField: "max_tokens", extraHeaders: { "X-Title": "IELSTDIARYS" } }, args));
   } catch (e) {
+    console.error("[ai] fetch failed", provider, model, e && e.message);
     return fail(res, 502, "upstream_error", "Không kết nối được tới nhà cung cấp AI.");
   }
+  if (out.error || out.status) console.error("[ai] upstream error", provider, model, out.status, String(out.error || "").slice(0, 500));
   if (out.error || out.status) { const [code, msg] = classify(out.status, out.error); return fail(res, code === "bad_key" ? 400 : code === "rate_limited" ? 429 : 502, code, msg + (out.error && code === "upstream_error" ? "" : out.error ? " (" + String(out.error).slice(0, 160) + ")" : "")); }
   return res.status(200).json({ text: out.text || "", truncated: !!out.truncated, provider, model });
 };
