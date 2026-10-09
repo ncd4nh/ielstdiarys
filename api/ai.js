@@ -11,7 +11,7 @@ const ENV_KEYS = {
 };
 const DEFAULTS = {
   anthropic: { model: "claude-sonnet-4-5", quick: "claude-haiku-4-5" },
-  gemini: { model: "gemini-2.5-flash", quick: "gemini-2.5-flash-lite" },
+  gemini: { model: "gemini-3.8-flash", quick: "gemini-3.8-flash" },
   openai: { model: "gpt-4.1", quick: "gpt-4.1-mini" },
   openrouter: { model: "google/gemini-2.5-flash", quick: "google/gemini-2.5-flash-lite" }
 };
@@ -95,9 +95,15 @@ module.exports = async (req, res) => {
     else out = await callOpenAICompat(Object.assign({ base: "https://openrouter.ai/api/v1", tokenField: "max_tokens", extraHeaders: { "X-Title": "IELSTDIARYS" } }, args));
   } catch (e) {
     console.error("[ai] fetch failed", provider, model, e && e.message);
-    return fail(res, 502, "upstream_error", "Không kết nối được tới nhà cung cấp AI.");
+    return res.status(502).json({ code: "upstream_error", error: "Không kết nối được tới nhà cung cấp AI. [" + provider + " · " + model + "]", retry: true, model });
   }
   if (out.error || out.status) console.error("[ai] upstream error", provider, model, out.status, String(out.error || "").slice(0, 500));
-  if (out.error || out.status) { const [code, msg] = classify(out.status, out.error); return fail(res, code === "bad_key" ? 400 : code === "rate_limited" ? 429 : 502, code, msg + (out.error && code === "upstream_error" ? "" : out.error ? " (" + String(out.error).slice(0, 160) + ")" : "")); }
+  if (out.error || out.status) {
+    const [code, msg] = classify(out.status, out.error);
+    // retry: lỗi tạm thời phía nhà cung cấp (quá tải, hết lượt theo phút, 5xx) — trình duyệt sẽ tự thử lại
+    const retry = code === "rate_limited" || (code === "upstream_error" && (!out.status || out.status >= 500 || out.status === 408));
+    const detail = (out.error && code !== "upstream_error" ? " (" + String(out.error).slice(0, 160) + ")" : "") + " [" + provider + " · " + model + "]";
+    return res.status(code === "bad_key" ? 400 : code === "rate_limited" ? 429 : 502).json({ code, error: msg + detail, retry, model });
+  }
   return res.status(200).json({ text: out.text || "", truncated: !!out.truncated, provider, model });
 };

@@ -476,7 +476,7 @@ audio{width:100%}
   try { var m = location.hash.match(/^#ai=(.+)$/); if (m) { ls.set(PASSKEY, decodeURIComponent(m[1])); history.replaceState(null, "", location.pathname + location.search); } } catch (e) {}
   var SETKEY = "ielts-ai-settings";
   var PROV = {
-    gemini: { n: "Gemini", full: "Gemini (Google)", keyUrl: "https://aistudio.google.com/apikey", note: "Có hạn mức miễn phí khi tạo key ở Google AI Studio.", models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"] },
+    gemini: { n: "Gemini", full: "Gemini (Google)", keyUrl: "https://aistudio.google.com/apikey", note: "Có hạn mức miễn phí khi tạo key ở Google AI Studio.", models: ["gemini-3.8-flash"] },
     anthropic: { n: "Claude", full: "Claude (Anthropic)", keyUrl: "https://console.anthropic.com/settings/keys", note: "Trả phí theo lượng dùng, tách riêng với gói Claude.", models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"] },
     openai: { n: "ChatGPT", full: "ChatGPT (OpenAI)", keyUrl: "https://platform.openai.com/api-keys", note: "Trả phí theo lượng dùng, tách riêng với gói ChatGPT Plus.", models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini", "gpt-5", "gpt-5-mini"] },
     openrouter: { n: "OpenRouter", full: "OpenRouter (nhiều model)", keyUrl: "https://openrouter.ai/keys", note: "Một key dùng được nhiều hãng; tên model dạng hãng/model.", models: ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4.5", "openai/gpt-4.1-mini", "deepseek/deepseek-chat"] }
@@ -485,7 +485,7 @@ audio{width:100%}
   var serverInfo = { env: {}, needsPassword: false, defaults: {} };
   function readSettings() { try { return JSON.parse(ls.get(SETKEY) || "null") || {}; } catch (e) { return {}; } }
   var settings = normSettings(readSettings());
-  function normSettings(s) { s = s || {}; return { primary: s.primary || "", fallback: s.fallback || "", sync: s.sync !== false, providers: s.providers || {} }; }
+  function normSettings(s) { s = s || {}; return { primary: s.primary || "", fallback: s.fallback || "", sync: s.sync !== false, providers: s.providers || {}, updatedAt: +s.updatedAt || 0 }; }
   function hasKey(cfg, p) { var c = cfg.providers[p] || {}; return !!(c.key && String(c.key).trim()) || !!serverInfo.env[p]; }
   function chainOf(cfg) {
     var arr = [];
@@ -515,12 +515,22 @@ audio{width:100%}
       throw { code: "upstream_error", message: "Không kết nối được máy chủ." };
     }
     var j = {}; try { j = await r.json(); } catch (e) {}
-    if (!r.ok) throw { code: j.code || (r.status === 429 ? "rate_limited" : "upstream_error"), message: j.error || r.statusText, provider: p };
-    if (!String(j.text || "").trim()) throw { code: "empty_completion", message: "AI không trả lời.", provider: p };
+    if (r.status === 504) throw { code: "timeout", message: "AI xử lý quá lâu nên bị ngắt. Thử lại, hoặc dùng model nhanh hơn. [" + PROV[p].n + (model ? " · " + model : "") + "]", provider: p };
+    if (!r.ok) throw { code: j.code || (r.status === 429 ? "rate_limited" : "upstream_error"), message: j.error || r.statusText, provider: p, retry: j.retry !== undefined ? !!j.retry : r.status === 429 || r.status >= 500 };
+    if (!String(j.text || "").trim()) throw { code: "empty_completion", message: "AI không trả lời. [" + PROV[p].n + " · " + (j.model || model) + "]", provider: p, retry: true };
     return j;
+  }
+  /* lỗi tạm thời (quá tải, hết lượt theo phút, trả lời rỗng) → thử lại tối đa 2 lần, chờ 1.5s rồi 4s */
+  var RETRY_WAIT = [1500, 4000];
+  function wait(ms, signal) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(resolve, ms);
+      if (signal) signal.addEventListener("abort", function () { clearTimeout(t); reject({ code: "cancelled", message: "cancelled" }); }, { once: true });
+    });
   }
   async function aiCall(input, opts, cfgOverride) {
     opts = opts || {};
+    await infoReady; // cần biết server có sẵn key nào trước khi chọn nhà cung cấp
     var cfg = cfgOverride || settings;
     var list = opts.images ? (opts.images instanceof Blob ? [opts.images] : Array.from(opts.images)) : [];
     var images = await Promise.all(list.slice(0, 6).map(toB64));
@@ -528,15 +538,19 @@ audio{width:100%}
     if (!ch.length) throw { code: "not_configured", message: "Chưa cài đặt AI." };
     var lastErr;
     for (var i = 0; i < ch.length; i++) {
-      try {
-        var j = await callOne(cfg, ch[i], input, opts, images);
-        if (i > 0 && window.__toast) window.__toast("AI chính lỗi — đã dùng " + PROV[ch[i]].n + " (dự phòng).");
-        var text = j.text;
-        if (opts.onText) try { opts.onText({ text: text, delta: text }); } catch (e) {}
-        return { text: text, truncated: !!j.truncated, modelTierApplied: opts.modelTier || "default", provider: j.provider, model: j.model };
-      } catch (e) {
-        lastErr = e;
-        if (e.code === "cancelled" || e.code === "bad_pass" || e.code === "prompt_too_large") throw e;
+      for (var attempt = 0; ; attempt++) {
+        try {
+          var j = await callOne(cfg, ch[i], input, opts, images);
+          if (i > 0 && window.__toast) window.__toast("AI chính lỗi — đã dùng " + PROV[ch[i]].n + " (dự phòng).");
+          var text = j.text;
+          if (opts.onText) try { opts.onText({ text: text, delta: text }); } catch (e) {}
+          return { text: text, truncated: !!j.truncated, modelTierApplied: opts.modelTier || "default", provider: j.provider, model: j.model };
+        } catch (e) {
+          lastErr = e;
+          if (e.code === "cancelled" || e.code === "bad_pass" || e.code === "prompt_too_large") throw e;
+          if (!e.retry || attempt >= RETRY_WAIT.length) break; // lỗi cố định (sai key, sai model…) → chuyển sang AI dự phòng
+          await wait(RETRY_WAIT[attempt], opts.signal);
+        }
       }
     }
     throw lastErr;
@@ -554,7 +568,8 @@ audio{width:100%}
   sample.limits = async function () { return { maxPromptBytes: 262144, images: { maxCount: 6, maxInputBytes: 20e6, mediaTypes: ["image/jpeg", "image/png", "image/webp"] } }; };
   var infoReady = fetch("/api/ai").then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { if (j) serverInfo = { env: j.env || {}, needsPassword: !!j.needsPassword, defaults: j.defaults || {} }; }).catch(function () {});
   function useSample() { return infoReady.then(function () { return aiReadyNow() ? sample : null; }); }
-  function persistSettings() {
+  function persistSettings(keepTime) {
+    if (!keepTime) settings.updatedAt = Date.now();
     ls.set(SETKEY, JSON.stringify(settings));
     if (settings.sync && sb && user) sb.from("items").upsert({ user_id: user.id, id: "_ai_settings", kind: "_settings", data: settings, updated_at: new Date().toISOString() }, { onConflict: "user_id,id" }).then(function (r) { if (r.error && window.__toast) window.__toast("Chưa lưu được cài đặt AI lên tài khoản."); });
     else if (!settings.sync && sb && user) sb.from("items").delete().eq("user_id", user.id).eq("id", "_ai_settings").then(function () {});
@@ -562,7 +577,11 @@ audio{width:100%}
   async function pullSettings() {
     if (!sb || !user) return;
     var r = await sb.from("items").select("data").eq("id", "_ai_settings").limit(1);
-    if (!r.error && r.data && r.data[0] && r.data[0].data) { settings = normSettings(r.data[0].data); ls.set(SETKEY, JSON.stringify(settings)); }
+    if (r.error) return;
+    var cloud = r.data && r.data[0] && r.data[0].data ? normSettings(r.data[0].data) : null;
+    // giữ bản sửa sau cùng: máy này mới hơn → đẩy lên tài khoản; tài khoản mới hơn → lấy về
+    if (cloud && cloud.updatedAt >= settings.updatedAt) { settings = cloud; ls.set(SETKEY, JSON.stringify(settings)); }
+    else if (settings.sync && settings.updatedAt) persistSettings(true);
   }
   function openSettings() {
     var draft = JSON.parse(JSON.stringify(settings));
@@ -602,8 +621,14 @@ audio{width:100%}
         try {
           var cfg = JSON.parse(JSON.stringify(draft)); cfg.only = tab;
           if (!hasKey(cfg, tab)) throw { message: "Chưa nhập API key." };
-          var r = await aiCall("Reply with exactly the word OK.", { modelTier: "default" }, cfg);
-          draw("Kết nối tốt — " + escH(r.model || "") + " trả lời: " + escH(String(r.text).trim().slice(0, 40)), "ok");
+          // thử cả hai model: chấm bài/ra đề dùng model chính, tra từ/gợi ý dùng model nhanh
+          var ping = "Reply with exactly the word OK.", res = [];
+          for (var t of [["default", "Model chính"], ["quick", "Model nhanh"]]) {
+            try { var r = await aiCall(ping, { modelTier: t[0] }, cfg); res.push({ ok: true, s: t[1] + " (" + (r.model || "") + "): OK" }); }
+            catch (e) { res.push({ ok: false, s: t[1] + " lỗi — " + ((e && e.message) || "không rõ") }); }
+          }
+          var allOk = res.every(function (x) { return x.ok; });
+          draw(res.map(function (x) { return escH(x.s); }).join("<br>"), allOk ? "ok" : "err");
         } catch (e) { draw(escH((e && e.message) || "Lỗi không xác định."), "err"); }
       };
       el.querySelector("#as-save").onclick = function () {
@@ -1112,8 +1137,10 @@ function aiErr(e) {
   if (c === "not_granted" || c === "sampling_disabled" || c === "not_declared" || c === "capability_disabled") { S.ai = null; return "AI chưa được cho phép trên trang này."; }
   if (c === "not_configured") return "Chưa cài đặt AI — bấm nút AI ở góc trên để thêm API key.";
   if (c === "bad_key") return (e.message || "API key không hợp lệ.") + " Kiểm tra trong Cài đặt AI.";
-  if (c === "model_not_found") return "Tên model không đúng — kiểm tra trong Cài đặt AI.";
-  if (c === "no_credit") return "Tài khoản API đã hết hạn mức / chưa nạp tiền.";
+  const where = (String(e.message || "").match(/\[[^\]]+\]$/) || [""])[0]; // "[Nhà cung cấp · model]" do /api/ai gắn vào
+  if (c === "model_not_found") return "Tên model không đúng — kiểm tra trong Cài đặt AI. " + where;
+  if (c === "no_credit") return "Tài khoản API đã hết hạn mức / chưa nạp tiền. " + where;
+  if (c === "timeout") return e.message;
   if (c === "bad_pass") return "Sai hoặc thiếu mã truy cập AI. Mở lại trang với đường dẫn có #ai=mã-của-bạn.";
   if (c === "rate_limited") return "AI đang giới hạn lượt dùng. Thử lại sau ít phút.";
   if (c === "invalid_json") return "AI trả lời sai định dạng. Bấm thử lại.";
