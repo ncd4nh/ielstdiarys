@@ -8,6 +8,25 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html,body{height:100%}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>IELSTDIARYS</title>
+<script>
+/* Theme sáng/tối: áp dụng lựa chọn đã lưu trước khi vẽ trang (tránh nháy màu). Chưa chọn → theo hệ điều hành. */
+(function () {
+  var KEY = "ielts-theme", root = document.documentElement, mq = window.matchMedia && matchMedia("(prefers-color-scheme: dark)");
+  function saved() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+  function current() { return root.getAttribute("data-theme") || (mq && mq.matches ? "dark" : "light"); }
+  function apply(t) {
+    if (t === "light" || t === "dark") root.setAttribute("data-theme", t); else root.removeAttribute("data-theme");
+    var m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = current() === "dark" ? "#0C1424" : "#EDF4FE";
+  }
+  apply(saved());
+  window.toggleTheme = function () {
+    var t = current() === "dark" ? "light" : "dark";
+    apply(t); try { localStorage.setItem(KEY, t); } catch (e) {}
+  };
+  document.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("[data-theme-toggle]")) window.toggleTheme(); });
+  if (mq && mq.addEventListener) mq.addEventListener("change", function () { if (!saved()) apply(null); });
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=Poppins:wght@600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@500;700&display=swap">
@@ -75,6 +94,15 @@ a{color:var(--accent)}
 .wordmark i{font-style:normal;color:#FF3B3B}
 .brand .band{font-family:var(--f-num);font-weight:700;color:var(--mark);border:1.5px solid var(--mark);border-radius:999px;padding:0 8px;font-size:12px}
 .top .sp{flex:1}
+.themebtn{display:inline-grid;place-items:center;width:34px;height:34px;flex:none;border:1px solid var(--line);background:var(--sheet);color:var(--ink);border-radius:10px;cursor:pointer;padding:0;transition:transform .15s,border-color .15s}
+.themebtn:hover{border-color:var(--accent);transform:translateY(-1px)}
+.themebtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.themebtn svg{width:18px;height:18px}
+.themebtn .sun{display:none}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .themebtn .sun{display:block}:root:not([data-theme="light"]) .themebtn .moon{display:none}}
+:root[data-theme="dark"] .themebtn .sun{display:block}
+:root[data-theme="dark"] .themebtn .moon{display:none}
+#authov .themebtn{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));right:16px}
 .status{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--faint)}
 .dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
@@ -412,6 +440,7 @@ audio{width:100%}
   <div class="brand"><span class="wordmark" role="img" aria-label="IELSTDIARYS">ielstdiarys<i>.</i></span><span class="band" id="brandBand" hidden></span></div>
   <div class="sp"></div>
   <div class="status" id="status"></div>
+  <button class="themebtn" type="button" data-theme-toggle title="Đổi giao diện sáng/tối" aria-label="Đổi giao diện sáng/tối"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
 </div>
 <div class="shell">
   <nav class="rail" id="nav" aria-label="Mục"></nav>
@@ -609,7 +638,8 @@ audio{width:100%}
   function overlay(html) {
     var el = document.getElementById("authov");
     if (!el) { el = document.createElement("div"); el.id = "authov"; document.body.appendChild(el); }
-    el.innerHTML = '<div class="ac">' + wordmark + html + "</div>"; el.hidden = false; return el;
+    var tb = document.querySelector(".top .themebtn");
+    el.innerHTML = (tb ? tb.outerHTML : "") + '<div class="ac">' + wordmark + html + "</div>"; el.hidden = false; return el;
   }
   function closeOverlay() { var el = document.getElementById("authov"); if (el) el.remove(); }
   function errVi(e) {
