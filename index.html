@@ -1397,16 +1397,19 @@ async function enrich(id) {
   if (aiCtl["enrich-" + id]) return;
   const c = find("vocab", id); if (!c) return;
   await patch("vocab", id, { aiStatus: "pending" });
-  const prompt = `You are an English–Vietnamese lexicographer helping a Vietnamese IELTS learner (target band 6.5–7).
+  const prompt = `You are an English–Vietnamese lexicographer helping a Vietnamese IELTS learner.
 Word or phrase: "${c.word}"
 Context sentence where the learner met it: "${c.context || "(none)"}"
-Explain the sense used in the context (if any). Reply with ONLY this JSON object:
-{"word":"dictionary form","ipa":"/IPA (British)/","pos":"noun | verb | adjective | adverb | phrasal verb | idiom | collocation | ...","level":"CEFR level e.g. B2","meaning_vi":"nghĩa tiếng Việt ngắn gọn, đúng ngữ cảnh","definition_en":"short English definition","examples":[{"en":"natural example sentence","vi":"bản dịch"},{"en":"...","vi":"..."},{"en":"an IELTS Writing/Speaking style sentence","vi":"..."}],"usage":["cách dùng / ngữ cảnh nên dùng, viết bằng tiếng Việt","lỗi hay gặp hoặc lưu ý sắc thái (tiếng Việt)"],"collocations":["3-5 common collocations"],"synonyms":["2-4 synonyms or near synonyms"],"family":["related word forms with part of speech"],"ielts_tip":"1 câu tiếng Việt: dùng từ này thế nào để ăn điểm Lexical Resource"}`;
+Explain ONLY the sense used in the context; without context choose the most common sense. Return compact JSON only, no Markdown or commentary. Target at most 450 output tokens, well below the 800-token limit. Do not repeat the input word or context.
+Use this exact structure:
+{"ipa":"/British IPA/","pos":"one part of speech","level":"B2","meaning_vi":"","definition_en":"","examples":[{"en":"","vi":""}],"usage":[""],"collocations":[],"synonyms":[],"family":[],"ielts_tip":""}
+Limits: meaning_vi at most 12 words; definition_en at most 10 words; exactly ONE useful example (English at most 12 words, Vietnamese at most 16 words); usage at most ONE note of 12 Vietnamese words; collocations at most TWO short phrases; synonyms at most TWO words/phrases; family at most TWO forms with abbreviated part of speech; ielts_tip at most 12 Vietnamese words. Use empty arrays or an empty string for optional information that is not useful. Preserve accurate meaning, IPA and natural grammar; do not add other senses, examples or fields.`;
   try {
     const j = await aiJson("enrich-" + id, prompt, { modelTier: "quick" });
     if (!j || typeof j !== "object") throw { code: "invalid_json" };
-    const arr = v => Array.isArray(v) ? v.slice(0, 6) : [];
-    await patch("vocab", id, { ipa: String(j.ipa || ""), pos: String(j.pos || ""), level: String(j.level || ""), meaning_vi: String(j.meaning_vi || ""), definition_en: String(j.definition_en || ""), examples: arr(j.examples).map(x => ({ en: String(x.en || x || ""), vi: String(x.vi || "") })), usage: arr(j.usage).map(String), collocations: arr(j.collocations).map(String), synonyms: arr(j.synonyms).map(String), family: arr(j.family).map(String), ielts_tip: String(j.ielts_tip || ""), aiStatus: "done" });
+    if (!String(j.meaning_vi || "").trim()) throw { code: "invalid_json" };
+    const arr = (v, limit) => Array.isArray(v) ? v.slice(0, limit) : [];
+    await patch("vocab", id, { ipa: String(j.ipa || ""), pos: String(j.pos || ""), level: String(j.level || ""), meaning_vi: String(j.meaning_vi || ""), definition_en: String(j.definition_en || ""), examples: arr(j.examples, 1).map(x => ({ en: String(x.en || x || ""), vi: String(x.vi || "") })), usage: arr(j.usage, 1).map(String), collocations: arr(j.collocations, 2).map(String), synonyms: arr(j.synonyms, 2).map(String), family: arr(j.family, 2).map(String), ielts_tip: String(j.ielts_tip || ""), aiStatus: "done" });
   } catch (e) { await patch("vocab", id, { aiStatus: "error" }); }
 }
 

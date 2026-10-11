@@ -93,3 +93,30 @@ test('frontend retry loop: permanent failure once, temporary failure at most thr
     assert.equal(waits, retry ? 2 : 0);
   }
 });
+
+test('word lookup requests compact quick-tier JSON and saves only useful bounded details', async () => {
+  const source = html.slice(html.indexOf('async function enrich(id)'), html.indexOf('async function saveGrammar('));
+  const saved = [], requests = [];
+  let result = {meaning_vi: 'bền vững', ipa: '/səˈsteɪnəbl/', pos: 'adjective', level: 'B2', examples: [{en: 'We need sustainable energy.', vi: 'Chúng ta cần năng lượng bền vững.'}, {en: 'extra'}, {en: 'extra'}], usage: ['note', 'extra'], collocations: ['sustainable energy', 'sustainable growth', 'extra'], synonyms: ['viable', 'lasting', 'extra'], family: ['sustain (v)', 'sustainability (n)', 'extra']};
+  const context = {
+    aiCtl: {}, find: () => ({word: 'sustainable', context: 'We need sustainable energy.'}),
+    patch: async (kind, id, fields) => {saved.push(fields);},
+    aiJson: async (key, prompt, opts) => {requests.push({key, prompt, opts}); return result;},
+  };
+  vm.runInNewContext(source, context);
+  await context.enrich('word-1');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].opts.modelTier, 'quick');
+  assert.match(requests[0].prompt, /450 output tokens/);
+  assert.match(requests[0].prompt, /We need sustainable energy/);
+  const entry = saved.at(-1);
+  assert.equal(entry.aiStatus, 'done');
+  assert.equal(entry.meaning_vi, 'bền vững');
+  assert.equal(entry.examples.length, 1);
+  assert.equal(entry.usage.length, 1);
+  for (const field of ['collocations', 'synonyms', 'family']) assert.equal(entry[field].length, 2);
+  result = {meaning_vi: ''};
+  await context.enrich('word-2');
+  assert.equal(saved.at(-1).aiStatus, 'error');
+  assert.equal(saved.at(-1).meaning_vi, undefined);
+});
