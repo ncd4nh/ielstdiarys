@@ -46,7 +46,7 @@ async function callAnthropic({ key, model, msgs, images, maxTokens }) {
 async function callGemini({ key, model, msgs, images, maxTokens }) {
   const contents = msgs.map((m, i) => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(i === msgs.length - 1 ? images.map((d) => ({ inline_data: { mime_type: "image/jpeg", data: d } })) : []), { text: m.text }] }));
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent";
-  const r = await fetch(url, { method: "POST", headers: { "x-goog-api-key": key, "content-type": "application/json" }, body: JSON.stringify({ contents, generationConfig: { maxOutputTokens: Math.max(maxTokens, 16000) } }) });
+  const r = await fetch(url, { method: "POST", headers: { "x-goog-api-key": key, "content-type": "application/json" }, body: JSON.stringify({ contents, generationConfig: { maxOutputTokens: maxTokens } }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) return { status: r.status, error: j.error && j.error.message };
   const c = (j.candidates || [])[0] || {};
@@ -87,7 +87,9 @@ module.exports = async (req, res) => {
   if (!msgs.length || msgs[msgs.length - 1].role !== "user") return fail(res, 400, "bad_request", "Yêu cầu không hợp lệ.");
   if (JSON.stringify(msgs).length > 400000) return fail(res, 413, "prompt_too_large", "Nội dung quá dài.");
   const imgs = Array.isArray(images) ? images.slice(0, 6).map(String) : [];
-  const maxTokens = tier === "quick" ? 3000 : 8000;
+  // Preserve the previous budget only for explicitly marked long learning tasks.
+  const longTasks = ["ielts_feedback", "ocr", "answer_sheet", "quiz"];
+  const maxTokens = tier === "quick" ? 800 : longTasks.includes(body.task) ? 8000 : 2000;
   const args = { key, model, msgs, images: imgs, maxTokens };
   let out;
   try {
@@ -104,7 +106,7 @@ module.exports = async (req, res) => {
   if (out.error || out.status) {
     const [code, msg] = classify(out.status, out.error);
     // retry: lỗi tạm thời phía nhà cung cấp (quá tải, hết lượt theo phút, 5xx) — trình duyệt sẽ tự thử lại
-    const retry = code === "rate_limited" || (code === "upstream_error" && (!out.status || out.status >= 500 || out.status === 408));
+    const retry = (code === "rate_limited" && !/quota|resource_exhausted|billing|balance|insufficient/i.test(String(out.error || ""))) || (code === "upstream_error" && (!out.status || out.status >= 500 || out.status === 408));
     const detail = (out.error && code !== "upstream_error" ? " (" + String(out.error).slice(0, 160) + ")" : "") + " [" + provider + " · " + model + "]";
     return res.status(code === "bad_key" ? 400 : code === "rate_limited" ? 429 : 502).json({ code, error: msg + detail, retry, model });
   }

@@ -512,7 +512,7 @@ audio{width:100%}
     var model = opts.modelTier === "quick" ? (c.quick || "") : (c.model || "");
     var r;
     try {
-      r = await fetch("/api/ai", { method: "POST", headers: { "content-type": "application/json", "x-app-pass": ls.get(PASSKEY) || "" }, body: JSON.stringify({ provider: p, key: c.key || "", model: model, input: input, tier: opts.modelTier || "default", images: images }), signal: opts.signal });
+      r = await fetch("/api/ai", { method: "POST", headers: { "content-type": "application/json", "x-app-pass": ls.get(PASSKEY) || "" }, body: JSON.stringify({ provider: p, key: c.key || "", model: model, input: input, tier: opts.modelTier || "default", task: opts.task, images: images }), signal: opts.signal });
     } catch (e) {
       if (e && e.name === "AbortError") throw { code: "cancelled", message: "cancelled" };
       throw { code: "upstream_error", message: "Không kết nối được máy chủ." };
@@ -520,7 +520,7 @@ audio{width:100%}
     var j = {}; try { j = await r.json(); } catch (e) {}
     if (r.status === 504) throw { code: "timeout", message: "AI xử lý quá lâu nên bị ngắt. Thử lại, hoặc dùng model nhanh hơn. [" + PROV[p].n + (model ? " · " + model : "") + "]", provider: p };
     if (!r.ok) throw { code: j.code || (r.status === 429 ? "rate_limited" : "upstream_error"), message: (j.error || j.message || r.statusText || "Máy chủ không trả thông báo lỗi.") + " [HTTP " + r.status + "]", provider: p, retry: j.retry !== undefined ? !!j.retry : r.status === 429 || r.status >= 500 };
-    if (!String(j.text || "").trim()) throw { code: "empty_completion", message: "AI không trả lời. [" + PROV[p].n + " · " + (j.model || model) + "]", provider: p, retry: true };
+    if (!String(j.text || "").trim()) throw { code: j.truncated ? "output_truncated" : "empty_completion", message: "AI không trả lời. [" + PROV[p].n + " · " + (j.model || model) + "]", provider: p, retry: false };
     return j;
   }
   /* lỗi tạm thời (quá tải, hết lượt theo phút, trả lời rỗng) → thử lại tối đa 2 lần, chờ 1.5s rồi 4s */
@@ -561,7 +561,9 @@ audio{width:100%}
   function sample(input, opts) { return aiCall(input, opts); }
   sample.json = async function (input, opts) {
     var prompt = typeof input === "string" ? input + "\n\nReply with only the JSON value, no other text." : input;
-    var res = await aiCall(prompt, opts); var t = res.text.trim();
+    var res = await aiCall(prompt, opts);
+    if (res.truncated) throw { code: "output_truncated", message: "AI đã đạt giới hạn token trước khi hoàn tất JSON." };
+    var t = res.text.trim();
     var fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
     var a = t.search(/[\[{]/), b = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
     var tries = [t, fence && fence[1], a >= 0 && b > a ? t.slice(a, b + 1) : null];
@@ -1147,6 +1149,7 @@ function aiErr(e) {
   if (c === "bad_pass") return "Sai hoặc thiếu mã truy cập AI. Mở lại trang với đường dẫn có #ai=mã-của-bạn.";
   if (c === "rate_limited") return "AI đang giới hạn lượt dùng. Thử lại sau ít phút.";
   if (c === "invalid_json") return "AI trả lời sai định dạng. Bấm thử lại.";
+  if (c === "output_truncated") return "AI đã đạt giới hạn token; kết quả chưa hoàn chỉnh và chưa được lưu. Hãy chia nhỏ nội dung hoặc kiểm tra giới hạn cho tác vụ này.";
   if (c === "prompt_too_large") return "Nội dung quá dài cho AI. Hãy rút ngắn.";
   if (c === "refused") return "AI từ chối yêu cầu này. Hãy đổi nội dung.";
   if (c === "image_rejected") return "Ảnh không hợp lệ (định dạng hoặc dung lượng).";
@@ -1156,14 +1159,20 @@ const aiNote = () => S.ai ? "" : window.__aiSettings ? `<div class="note warn ro
 const aiCtl = {};
 async function aiCall(key, fn) {
   if (!S.ai) { toast("AI chưa sẵn sàng trên trang này."); throw { code: "none" }; }
-  aiCtl[key]?.abort(); const ctl = aiCtl[key] = new AbortController();
+  if (aiCtl[key]) throw { code: "cancelled", message: "Request already in progress" };
+  const ctl = aiCtl[key] = new AbortController();
   S.busy[key] = true; renderSoon();
   try { return await fn(ctl.signal); }
   catch (e) { const m = aiErr(e); if (m) toast(m); throw e; }
   finally { S.busy[key] = false; delete aiCtl[key]; renderSoon(); }
 }
-const aiJson = (key, prompt, opts = {}) => aiCall(key, signal => S.ai.json(prompt, { ...opts, signal }));
-const aiText = (key, prompt, opts = {}) => aiCall(key, async signal => (await S.ai(prompt, { ...opts, signal })).text);
+const aiTask = key => /^(wgrade|sgrade)(-|$)/.test(key) ? "ielts_feedback" : key === "ocr" ? "ocr" : key.startsWith("solve-") ? "answer_sheet" : key.startsWith("quiz-") ? "quiz" : undefined;
+const aiJson = (key, prompt, opts = {}) => aiCall(key, signal => S.ai.json(prompt, { task: aiTask(key), ...opts, signal }));
+const aiText = (key, prompt, opts = {}) => aiCall(key, async signal => {
+  const result = await S.ai(prompt, { task: aiTask(key), ...opts, signal });
+  if (result.truncated) throw { code: "output_truncated" };
+  return result.text;
+});
 const busyBtn = (key, label, act, attrs = "", cls = "primary") => S.busy[key]
   ? `<button class="btn ${cls}" disabled><span class="spin"></span> Đang xử lý…</button><button class="btn ghost sm" data-act="aistop" data-k="${key}">Dừng</button>`
   : `<button class="btn ${cls}" data-act="${act}" ${attrs} ${S.ai ? "" : "disabled"}>${label}</button>`;
@@ -1385,6 +1394,7 @@ async function saveWord(word, ctx, kind, srcId) {
   if (S.ai) enrich(c.id);
 }
 async function enrich(id) {
+  if (aiCtl["enrich-" + id]) return;
   const c = find("vocab", id); if (!c) return;
   await patch("vocab", id, { aiStatus: "pending" });
   const prompt = `You are an English–Vietnamese lexicographer helping a Vietnamese IELTS learner (target band 6.5–7).
@@ -1409,6 +1419,7 @@ async function saveGrammar(text, ctx, kind, srcId) {
   if (S.ai) enrichGrammar(c.id);
 }
 async function enrichGrammar(id) {
+  if (aiCtl["enrich-" + id]) return;
   const c = find("vocab", id); if (!c) return;
   await patch("vocab", id, { aiStatus: "pending" });
   const prompt = `You are an English grammar teacher for a Vietnamese IELTS learner (target band 6.5–7).
@@ -1417,7 +1428,7 @@ Sentence it came from: "${c.context || "(none — the text may itself be a struc
 Identify the single most useful grammar point / sentence structure shown (if the text is just the name of a structure, explain that structure). Reply with ONLY this JSON object:
 {"structure":"short English name, e.g. Mixed conditional (past → present)","name_vi":"tên tiếng Việt của cấu trúc","pattern":"công thức, e.g. If + S + had + V3, S + would + V","level":"B1|B2|C1","meaning_vi":"cấu trúc dùng để diễn đạt điều gì (1-2 câu, tiếng Việt)","analysis_vi":"phân tích câu gốc: phần nào thuộc cấu trúc, vì sao tác giả dùng nó (để trống nếu không có câu gốc)","usage":["3-4 trường hợp hay dùng, tiếng Việt"],"examples":[{"en":"everyday example","vi":"bản dịch"},{"en":"IELTS Writing Task 2 style sentence","vi":"..."},{"en":"IELTS Speaking style sentence","vi":"..."}],"mistakes":["lỗi người Việt hay mắc với cấu trúc này + cách sửa (tiếng Việt)"],"related":["2-3 related or alternative structures"],"ielts_tip":"1-2 câu tiếng Việt: dùng cấu trúc này thế nào để tăng điểm Grammatical Range & Accuracy"}`;
   try {
-    const j = await aiJson("enrich-" + id, prompt, { modelTier: "quick" });
+    const j = await aiJson("enrich-" + id, prompt);
     if (!j || typeof j !== "object") throw { code: "invalid_json" };
     const arr = v => Array.isArray(v) ? v.slice(0, 6) : [];
     await patch("vocab", id, { structure: String(j.structure || ""), name_vi: String(j.name_vi || ""), pattern: String(j.pattern || ""), level: String(j.level || ""), meaning_vi: String(j.meaning_vi || ""), analysis_vi: String(j.analysis_vi || ""), usage: arr(j.usage).map(String), examples: arr(j.examples).map(x => ({ en: String(x.en || x || ""), vi: String(x.vi || "") })), mistakes: arr(j.mistakes).map(String), related: arr(j.related).map(String), ielts_tip: String(j.ielts_tip || ""), aiStatus: "done" });
@@ -2398,6 +2409,7 @@ ACT.savekey = async el => {
 };
 ACT.solve = async el => {
   const kind = el.dataset.kind, id = el.dataset.id, item = find(kind, id); if (!item) return;
+  if (item.key && Object.keys(item.key).length) return;
   const nums = qNumbers(item.questions); const src = kind === "passages" ? item.text : item.transcript;
   if (!src) { toast("Cần có bài đọc / transcript để AI giải."); return; }
   const prompt = `You are an experienced IELTS ${kind === "passages" ? "Reading" : "Listening"} examiner. Answer every numbered question below using ONLY the ${kind === "passages" ? "passage" : "transcript"}. Respect each instruction's word limit (e.g. NO MORE THAN TWO WORDS) and copy words exactly from the text; for TRUE/FALSE/NOT GIVEN or YES/NO/NOT GIVEN write exactly those words; for letter answers write the letter only (or roman numeral for headings).
@@ -2537,7 +2549,7 @@ ACT.wgrade = async () => {
     ["w-essay", "w-prompt", "w-topic"].forEach(k => delete S.drafts[k]); S.wImage = null; S.wChart = null; go("writing", o.id);
   } catch (e) { toast("Bài đã được lưu nháp, bạn có thể chấm lại sau."); }
 };
-ACT.wgradeold = async el => { const x = find("writing", el.dataset.id); if (!x) return; try { const fb = normFb(await aiJson("wgrade-" + x.id, writingPrompt(x, false))); await patch("writing", x.id, { feedback: fb }); await scheduleItem("writing", x.id, bandScore(fb.overall), { band: fb.overall }); S.anim = true; } catch (e) {} };
+ACT.wgradeold = async el => { const x = find("writing", el.dataset.id); if (!x || x.feedback) return; try { const fb = normFb(await aiJson("wgrade-" + x.id, writingPrompt(x, false))); await patch("writing", x.id, { feedback: fb }); await scheduleItem("writing", x.id, bandScore(fb.overall), { band: fb.overall }); S.anim = true; } catch (e) {} };
 ACT.wreuse = el => { const x = find("writing", el.dataset.id); S.drafts["w-task"] = x.task; S.drafts["w-prompt"] = x.prompt; S.drafts["w-topic"] = x.topic || ""; S.drafts["w-essay"] = ""; S.wChart = x.chart || null; S.ui.editPrompt = false; go("writing", null); };
 /* speaking */
 ACT.sgen = async () => {
@@ -2581,7 +2593,7 @@ ACT.sgrade = async () => {
     ["s-tr", "s-q"].forEach(k => delete S.drafts[k]); S.sAudio = null; go("speaking", o.id);
   } catch (e) { toast("Bài nói đã được lưu, bạn có thể chấm lại sau."); }
 };
-ACT.sgradeold = async el => { const x = find("speaking", el.dataset.id); if (!x) return; try { const fb = normFb(await aiJson("sgrade-" + x.id, speakingPrompt(x))); await patch("speaking", x.id, { feedback: fb }); await scheduleItem("speaking", x.id, bandScore(fb.overall), { band: fb.overall }); S.anim = true; } catch (e) {} };
+ACT.sgradeold = async el => { const x = find("speaking", el.dataset.id); if (!x || x.feedback) return; try { const fb = normFb(await aiJson("sgrade-" + x.id, speakingPrompt(x))); await patch("speaking", x.id, { feedback: fb }); await scheduleItem("speaking", x.id, bandScore(fb.overall), { band: fb.overall }); S.anim = true; } catch (e) {} };
 ACT.sreuse = el => { const x = find("speaking", el.dataset.id); S.drafts["s-part"] = String(x.part); S.drafts["s-q"] = x.question; S.drafts["s-tr"] = ""; S.sAudio = null; go("speaking", null); };
 /* vocab */
 ACT.vocfilter = el => { S.ui.vocFilter = el.dataset.v; render(); };
@@ -2684,6 +2696,18 @@ function loadPdf() {
 }
 
 /* ----- global listeners ----- */
+// Lock the whole action, including persistence before/after its AI request.
+const aiActionsPending = new Set();
+for (const name of ["wgrade", "wgradeold", "sgrade", "sgradeold", "solve", "genquiz", "ocr", "wgen", "sgen", "enrich", "enrichall"]) {
+  const action = ACT[name];
+  ACT[name] = async (...args) => {
+    const key = name + ":" + (args[0]?.dataset?.id || "");
+    if (aiActionsPending.has(key)) return;
+    aiActionsPending.add(key);
+    try { return await action(...args); }
+    finally { aiActionsPending.delete(key); }
+  };
+}
 $("#celebrate").addEventListener("click", e => { if (e.target.id === "celebrate") e.target.hidden = true; });
 document.addEventListener("click", e => {
   const el = e.target.closest("[data-act]"); if (!el || el.disabled) return;
