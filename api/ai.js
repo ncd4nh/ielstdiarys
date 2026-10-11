@@ -7,15 +7,15 @@ const ENV_KEYS = {
   anthropic: () => process.env.ANTHROPIC_API_KEY,
   gemini: () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
   openai: () => process.env.OPENAI_API_KEY,
-  openrouter: () => process.env.OPENROUTER_API_KEY
+  openrouter: () => process.env.OPENROUTER_API_KEY,
   woku: () => process.env.WOKU_API_KEY
 };
 const DEFAULTS = {
   anthropic: { model: "claude-sonnet-4-5", quick: "claude-haiku-4-5" },
   gemini: { model: "gemini-3.8-flash", quick: "gemini-3.8-flash" },
   openai: { model: "gpt-4.1", quick: "gpt-4.1-mini" },
-  openrouter: { model: "google/gemini-2.5-flash", quick: "google/gemini-2.5-flash-lite" }
-    woku: {model: "gpt-4o-mini", quick: "gpt-4o-mini"}
+  openrouter: { model: "google/gemini-2.5-flash", quick: "google/gemini-2.5-flash-lite" },
+  woku: { model: "gpt-4o-mini", quick: "gpt-4o-mini" }
 };
 
 function fail(res, status, code, error) { return res.status(status).json({ code, error }); }
@@ -58,7 +58,7 @@ async function callOpenAICompat({ key, model, msgs, images, maxTokens, base, ext
   const messages = msgs.map((m, i) => ({ role: m.role, content: i === msgs.length - 1 && images.length ? [{ type: "text", text: m.text }, ...images.map((d) => ({ type: "image_url", image_url: { url: "data:image/jpeg;base64," + d } }))] : m.text }));
   const r = await fetch(base + "/chat/completions", { method: "POST", headers: Object.assign({ authorization: "Bearer " + key, "content-type": "application/json" }, extraHeaders || {}), body: JSON.stringify({ model, messages, [tokenField]: maxTokens }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) return { status: r.status, error: (j.error && (j.error.message || j.error)) || r.statusText };
+  if (!r.ok) return { status: r.status, error: (j.error && (j.error.message || j.error)) || j.message || r.statusText || "HTTP " + r.status };
   const ch = (j.choices || [])[0] || {};
   let text = ch.message && ch.message.content;
   if (Array.isArray(text)) text = text.map((p) => p.text || "").join("");
@@ -94,6 +94,7 @@ module.exports = async (req, res) => {
     if (provider === "anthropic") out = await callAnthropic(args);
     else if (provider === "gemini") out = await callGemini(args);
     else if (provider === "openai") out = await callOpenAICompat(Object.assign({ base: "https://api.openai.com/v1", tokenField: "max_completion_tokens" }, args));
+    else if (provider === "woku") out = await callOpenAICompat(Object.assign({ base: "https://llm.wokushop.com/v1", tokenField: "max_tokens" }, args));
     else out = await callOpenAICompat(Object.assign({ base: "https://openrouter.ai/api/v1", tokenField: "max_tokens", extraHeaders: { "X-Title": "IELSTDIARYS" } }, args));
   } catch (e) {
     console.error("[ai] fetch failed", provider, model, e && e.message);

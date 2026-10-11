@@ -519,7 +519,7 @@ audio{width:100%}
     }
     var j = {}; try { j = await r.json(); } catch (e) {}
     if (r.status === 504) throw { code: "timeout", message: "AI xử lý quá lâu nên bị ngắt. Thử lại, hoặc dùng model nhanh hơn. [" + PROV[p].n + (model ? " · " + model : "") + "]", provider: p };
-    if (!r.ok) throw { code: j.code || (r.status === 429 ? "rate_limited" : "upstream_error"), message: j.error || r.statusText, provider: p, retry: j.retry !== undefined ? !!j.retry : r.status === 429 || r.status >= 500 };
+    if (!r.ok) throw { code: j.code || (r.status === 429 ? "rate_limited" : "upstream_error"), message: (j.error || j.message || r.statusText || "Máy chủ không trả thông báo lỗi.") + " [HTTP " + r.status + "]", provider: p, retry: j.retry !== undefined ? !!j.retry : r.status === 429 || r.status >= 500 };
     if (!String(j.text || "").trim()) throw { code: "empty_completion", message: "AI không trả lời. [" + PROV[p].n + " · " + (j.model || model) + "]", provider: p, retry: true };
     return j;
   }
