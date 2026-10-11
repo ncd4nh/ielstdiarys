@@ -481,7 +481,8 @@ audio{width:100%}
     gemini: { n: "Gemini", full: "Gemini (Google)", keyUrl: "https://aistudio.google.com/apikey", note: "Có hạn mức miễn phí khi tạo key ở Google AI Studio.", models: ["gemini-3.8-flash"] },
     anthropic: { n: "Claude", full: "Claude (Anthropic)", keyUrl: "https://console.anthropic.com/settings/keys", note: "Trả phí theo lượng dùng, tách riêng với gói Claude.", models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"] },
     openai: { n: "ChatGPT", full: "ChatGPT (OpenAI)", keyUrl: "https://platform.openai.com/api-keys", note: "Trả phí theo lượng dùng, tách riêng với gói ChatGPT Plus.", models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini", "gpt-5", "gpt-5-mini"] },
-    openrouter: { n: "OpenRouter", full: "OpenRouter (nhiều model)", keyUrl: "https://openrouter.ai/keys", note: "Một key dùng được nhiều hãng; tên model dạng hãng/model.", models: ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4.5", "openai/gpt-4.1-mini", "deepseek/deepseek-chat"] }
+    openrouter: { n: "OpenRouter", full: "OpenRouter (nhiều model)", keyUrl: "https://openrouter.ai/keys", note: "Một key dùng được nhiều hãng; tên model dạng hãng/model.", models: ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4.5", "openai/gpt-4.1-mini", "deepseek/deepseek-chat"] },
+    woku: { n: "Woku", full: "Woku Shop API", keyUrl: "https://llm.wokushop.com/", note: "API trung gian, chọn model theo danh sách được cấp quyền.", models: ["gpt-4o-mini"]}
   };
   var PKEYS = Object.keys(PROV);
   var serverInfo = { env: {}, needsPassword: false, defaults: {} };

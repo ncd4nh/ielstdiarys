@@ -8,12 +8,14 @@ const ENV_KEYS = {
   gemini: () => process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
   openai: () => process.env.OPENAI_API_KEY,
   openrouter: () => process.env.OPENROUTER_API_KEY
+  woku: () => process.env.WOKU_API_KEY
 };
 const DEFAULTS = {
   anthropic: { model: "claude-sonnet-4-5", quick: "claude-haiku-4-5" },
   gemini: { model: "gemini-3.8-flash", quick: "gemini-3.8-flash" },
   openai: { model: "gpt-4.1", quick: "gpt-4.1-mini" },
   openrouter: { model: "google/gemini-2.5-flash", quick: "google/gemini-2.5-flash-lite" }
+    woku: {model: "gpt-4o-mini", quick: "gpt-4o-mini"}
 };
 
 function fail(res, status, code, error) { return res.status(status).json({ code, error }); }
